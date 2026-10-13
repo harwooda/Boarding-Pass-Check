@@ -96,6 +96,13 @@ input[type="date"] { flex: 1 1 160px; min-width: 0; }
 .chips li .main-tag { font-family: var(--body); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-left: 4px; }
 .chips button { border: 0; background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 6px 8px; border-radius: 6px; }
 .checking { font-size: 0.9rem; }
+.two-up { align-items: flex-end; }
+.two-up .field { display: flex; flex-direction: column; gap: 6px; flex: 1 1 130px; min-width: 0; }
+.two-up .field input { width: 100%; flex: none; }
+#stationIn {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px 12px; min-height: 46px;
+  font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+}
 .checking strong { font-family: var(--mono); font-weight: 500; }
 
 .viewport { position: relative; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: #000; }
@@ -118,6 +125,8 @@ input[type="date"] { flex: 1 1 160px; min-width: 0; }
 .sign .why { margin-top: 6px; font-size: 1rem; font-weight: 500; }
 .result.idle .sign .word { font-size: 1.6rem; }
 .result.idle .sign .why { font-weight: 400; color: var(--muted); }
+.flags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.flag { background: #fff; color: #15212c; border-radius: 6px; padding: 4px 10px; font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .result.match .sign { background: var(--ok); color: #fff; }
 .result.bad .sign { background: var(--bad); color: #fff; }
 .result.dup .sign { background: var(--warn); color: var(--warn-ink); }
@@ -193,10 +202,17 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   </header>
 
   <section class="panel" aria-label="Flight to check against">
-    <div class="field-row">
-      <label for="dateIn" class="label" style="flex-basis:100%">Flight date</label>
-      <input type="date" id="dateIn">
+    <div class="field-row two-up">
+      <div class="field">
+        <label for="stationIn" class="label">Departing from</label>
+        <input id="stationIn" maxlength="3" autocapitalize="characters" spellcheck="false" autocomplete="off" enterkeyhint="done" aria-describedby="stationHint">
+      </div>
+      <div class="field">
+        <label for="dateIn" class="label">Flight date</label>
+        <input type="date" id="dateIn">
+      </div>
     </div>
+    <p class="hint err" id="stationHint" hidden>Use the 3-letter airport code, like JAC.</p>
     <label for="flightIn" class="label">Flight numbers</label>
     <form id="flightForm" class="field-row" autocomplete="off">
       <input id="flightIn" placeholder="UA1234" autocapitalize="characters" spellcheck="false" enterkeyhint="done">
@@ -240,6 +256,11 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
       <button class="btn secondary" type="button" data-sample="match">Matching pass</button>
       <button class="btn secondary" type="button" data-sample="flight">Wrong flight</button>
       <button class="btn secondary" type="button" data-sample="date">Wrong date</button>
+      <button class="btn secondary" type="button" data-sample="station">Wrong airport</button>
+      <button class="btn secondary" type="button" data-sample="notchecked">Not checked in</button>
+      <button class="btn secondary" type="button" data-sample="receipt">Itinerary receipt</button>
+      <button class="btn secondary" type="button" data-sample="standby">Standby + SSSS</button>
+      <button class="btn secondary" type="button" data-sample="old">Issued over a year ago</button>
       <button class="btn secondary" type="button" data-sample="again">Same pass again</button>
     </div>
   </details>
@@ -277,12 +298,15 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     mode: "unknown",        // unknown | live | photo
     busy: false,
     confirmClear: false,
+    station: "JAC",         // departing airport the pass must start from
   };
   try {
     const f = JSON.parse(localStorage.getItem("bpc.flights") || "[]");
     if (Array.isArray(f)) state.flights = f.filter((x) => x && x.carrier && Number.isFinite(x.num))
       .map((x) => ({ carrier: x.carrier, num: x.num, suffix: x.suffix || "" }));
     state.sound = localStorage.getItem("bpc.sound") !== "off";
+    const st = localStorage.getItem("bpc.station");
+    if (st && /^[A-Z]{3}$/.test(st)) state.station = st;
     // Settings from earlier versions (sound picker, codeshare lookup) are no longer used.
     Object.keys(localStorage).filter((k) => /^bpc\.(soundSet|lookupUrl|lookupPass|cs\.)/.test(k)).forEach((k) => localStorage.removeItem(k));
   } catch (e) { /* storage unavailable */ }
@@ -290,6 +314,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     try {
       localStorage.setItem("bpc.flights", JSON.stringify(state.flights));
       localStorage.setItem("bpc.sound", state.sound ? "on" : "off");
+      localStorage.setItem("bpc.station", state.station);
     } catch (e) { /* ignore */ }
   }
 
@@ -343,30 +368,92 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
         cabin: s[24].trim(),
         seat: s.slice(25, 29).trim().replace(/^0+(?=\d)/, ""),
         seq: s.slice(29, 34).trim().replace(/^0+(?=\d)/, ""),
+        status: s[34],
       };
       if (!/^[A-Z]{3}$/.test(leg.from) || !/^[A-Z]{3}$/.test(leg.to) || !leg.carrier) break;
+      const v = hex2(s.slice(35, 37));
+      Object.assign(leg, parseConditional(t.substr(pos + 37, v), i === 0));
       legs.push(leg);
-      const v = parseInt(s.slice(35, 37), 16);
-      pos += 37 + (Number.isFinite(v) ? v : 0);
+      pos += 37 + v;
     }
     if (!legs.length) return null;
-    return { name, legs, legCount };
+    return { name, legs, legCount, unique: legs[0].unique || null };
+  }
+  const hex2 = (s) => (/^[0-9A-F]{2}$/i.test(s) ? parseInt(s, 16) : 0);
+  // Optional ("conditional") section of a leg. The first leg's starts with '>' + version and a block
+  // that appears once per pass; every leg then has its own block. Airlines may cut either block short,
+  // so a field missing from the declared size is left empty.
+  function parseConditional(c, first) {
+    const out = {};
+    let p = 0;
+    if (first && c[0] === ">") {
+      const u = hex2(c.substr(2, 2)), U = c.substr(4, u);
+      out.unique = {
+        issued: u >= 7 ? U.substr(3, 4) : "",       // last digit of year + day of year
+        docType: u >= 8 ? U[7] : "",                // B = boarding pass, I = itinerary receipt
+        issuer: u >= 11 ? U.substr(8, 3).trim() : "",
+      };
+      p = 4 + u;
+    }
+    const r = hex2(c.substr(p, 2)), R = c.substr(p + 2, r);
+    if (r >= 13) out.ticket = (R.substr(0, 3) + R.substr(3, 10)).trim();
+    if (r >= 14) out.selectee = R[13];              // 1 = SSSS
+    if (r >= 18) out.marketing = R.substr(15, 3).trim();
+    return out;
+  }
+  const STATUS_TEXT = {
+    "0": "Not checked in", "1": "Checked in", "2": "Bag checked, not checked in", "3": "Checked in, bag checked",
+    "4": "Passed security", "5": "Passed boarding gate", "6": "Transit", "7": "Standby",
+    "8": "Boarding data revalidated", "9": "Original boarding line",
+  };
+  // Extra checks beyond flight/airport/date: hard stops turn the result red, the rest are labels.
+  function passChecks(pass, leg, legDate) {
+    const flags = [];
+    let stop = null;
+    if (leg.status === "0" || leg.status === "2") stop = { reason: "notchecked", word: "Not checked in", why: "Right flight, but the barcode says this passenger hasn't checked in." };
+    const u = pass.unique || {};
+    if (u.docType === "I") stop = stop || { reason: "receipt", word: "Itinerary receipt", why: "Right flight, but this is an itinerary receipt, not a boarding pass." };
+    if (leg.status === "7" || /STB|SBY/.test(leg.seat)) flags.push("Standby");
+    if (leg.selectee === "1") flags.push("SSSS");
+    let issued = null;
+    if (/^\d{4}$/.test(u.issued || "") && legDate) {
+      const y = +u.issued[0], d = +u.issued.slice(1);
+      if (d >= 1 && d <= 366) {
+        const fy = legDate.getUTCFullYear();
+        issued = new Date(Date.UTC(fy - (((fy - y) % 10) + 10) % 10, 0, d));
+        if (issued > legDate) flags.push("Issued after flight date");
+        else if (legDate - issued > 366 * 864e5) flags.push("Issued over a year before flight");
+      }
+    }
+    return { flags, stop, issued };
   }
 
   function evaluate(pass) {
     const target = isoToUTC(state.date);
     const tDoy = dayOfYear(target);
-    let best = null, rank = 0;
+    // A pass passes only if one leg has the right flight number, departing station and date.
+    // Otherwise report on the leg that came closest (flight number counts most, then station).
+    let best = null, rank = -1;
     pass.legs.forEach((leg, i) => {
-      const fOK = state.flights.some((f) => sameFlight(f, leg));
-      const dOK = leg.julian === tDoy;
-      const r = fOK && dOK ? 3 : fOK ? 2 : 1;
-      if (r > rank) { rank = r; best = { leg, index: i }; }
+      const ok = {
+        flight: state.flights.some((f) => sameFlight(f, leg)),
+        station: leg.from === state.station,
+        date: leg.julian === tDoy,
+      };
+      const r = (ok.flight ? 4 : 0) + (ok.station ? 2 : 0) + (ok.date ? 1 : 0);
+      if (r > rank) { rank = r; best = { leg, index: i, ok }; }
     });
-    const legDate = julianToDate(best.leg.julian, target);
-    if (rank === 3) return { status: "match", reason: "", why: "Pass is for " + flightLabel(best.leg) + " on " + fmtDate(legDate), ...best, legDate };
-    if (rank === 2) return { status: "bad", reason: "date", why: "Right flight, wrong date. This pass is for " + fmtDate(legDate) + ".", ...best, legDate };
-    return { status: "bad", reason: "flight", why: "This pass is for " + (Number.isFinite(best.leg.num) ? flightLabel(best.leg) : best.leg.carrier) + " on " + fmtDate(legDate) + ".", ...best, legDate };
+    const { leg, ok } = best;
+    const legDate = julianToDate(leg.julian, target);
+    const fl = Number.isFinite(leg.num) ? flightLabel(leg) : leg.carrier;
+    const chk = passChecks(pass, leg, legDate);
+    const base = { ...best, legDate, flags: chk.flags, issued: chk.issued, word: "" };
+    if (rank === 7 && chk.stop) return { ...base, status: "bad", reason: chk.stop.reason, word: chk.stop.word, why: chk.stop.why };
+    if (rank === 7) return { status: "match", reason: "", why: "Pass is for " + fl + " from " + leg.from + " on " + fmtDate(legDate), ...base };
+    if (!ok.flight) return { status: "bad", reason: "flight", why: "This pass is for " + fl + " from " + leg.from + " on " + fmtDate(legDate) + ".", ...base };
+    if (!ok.station && !ok.date) return { status: "bad", reason: "station", why: "Right flight number, but this pass departs " + leg.from + " (not " + state.station + ") on " + fmtDate(legDate) + ".", ...base };
+    if (!ok.station) return { status: "bad", reason: "station", why: "Right flight, wrong airport. This pass departs " + leg.from + ", not " + state.station + ".", ...base };
+    return { status: "bad", reason: "date", why: "Right flight, wrong date. This pass is for " + fmtDate(legDate) + ".", ...base };
   }
 
   /* ---------- sound ---------- */
@@ -554,8 +641,13 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
       ["Class", esc(leg.cabin || "–"), "mono"],
       ["Sequence", esc(leg.seq || "–"), "mono"],
       ["Confirmation", esc(leg.pnr || "–"), "mono"],
-      ["Barcode", esc(scan.format || "–") + (pass.legs.length > 1 ? " · leg " + (index + 1) + " of " + pass.legs.length : ""), ""],
+      ["Check-in status", esc(STATUS_TEXT[leg.status] || (leg.status && leg.status.trim() ? "Code " + leg.status : "Not given")), ""],
     ];
+    const u = pass.unique || {};
+    if (u.docType) rows.push(["Document", esc(u.docType === "B" ? "Boarding pass" : u.docType === "I" ? "Itinerary receipt" : "Code " + u.docType), ""]);
+    if (scan.issued) rows.push(["Issued", esc(scan.issued.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })), ""]);
+    if (leg.ticket) rows.push(["Ticket", esc(leg.ticket), "mono"]);
+    rows.push(["Barcode", esc(scan.format || "–") + (pass.legs.length > 1 ? " · leg " + (index + 1) + " of " + pass.legs.length : ""), ""]);
     return '<dl class="details">' + rows.map(([k, v, c]) =>
       '<div class="' + (c === "wide" ? "wide" : "") + '"><dt>' + k + '</dt><dd class="' + (c === "mono" ? "mono" : "") + '">' + v + "</dd></div>").join("") + "</dl>";
   }
@@ -571,7 +663,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     } else if (r.kind === "match") {
       word = "Match"; why = r.scan.why; body = detailsHTML(r.scan);
     } else if (r.kind === "bad") {
-      word = "Not this flight"; body = detailsHTML(r.scan);
+      word = r.scan.word || "Not this flight"; body = detailsHTML(r.scan);
       why = r.scan.why + (r.first ? " Also scanned at " + fmtTime(r.first.time) + "." : "");
     } else if (r.kind === "dup") {
       word = "Already scanned";
@@ -586,7 +678,10 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
       why = "Get closer so the barcode fills most of the photo, hold steady, and tilt to avoid glare.";
     }
     resultEl.className = "result " + cls;
-    resultEl.innerHTML = '<div class="sign"><div class="word">' + esc(word) + '</div><div class="why">' + esc(why) + "</div></div>" + body;
+    const flags = (r.scan && r.scan.flags) || [];
+    resultEl.innerHTML = '<div class="sign"><div class="word">' + esc(word) + '</div><div class="why">' + esc(why) + "</div>" +
+      (flags.length ? '<div class="flags">' + flags.map((f) => '<span class="flag">' + esc(f) + "</span>").join("") + "</div>" : "") +
+      "</div>" + body;
     if (r.kind !== "idle" && r.kind !== "busy") {
       void resultEl.offsetWidth; resultEl.classList.add("pop");
       if (state.mode !== "live") resultEl.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
@@ -605,8 +700,9 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     } else {
       log.innerHTML = state.scans.map((s) =>
         '<li class="' + s.status + '"><span class="bar"></span><div style="min-width:0"><div class="who">' + esc(s.pass.name || "Unnamed") +
-        '</div><div class="what">' + esc((Number.isFinite(s.leg.num) ? flightLabel(s.leg) : s.leg.carrier) + " · " + fmtDate(s.legDate) + " · " + (s.leg.seat || "no seat")) +
-        '</div></div><div class="when"><span class="pill">' + (s.status === "match" ? "Match" : "Not this flight") + "</span>" + fmtTime(s.time) + "</div></li>").join("");
+        '</div><div class="what">' + esc((Number.isFinite(s.leg.num) ? flightLabel(s.leg) : s.leg.carrier) + " · " + fmtDate(s.legDate) + " · " + (s.leg.seat || "no seat") +
+          ((s.flags || []).length ? " · " + s.flags.join(", ") : "")) +
+        '</div></div><div class="when"><span class="pill">' + esc(s.status === "match" ? "Match" : s.word || "Not this flight") + "</span>" + fmtTime(s.time) + "</div></li>").join("");
     }
     const ca = $("clearArea");
     if (!state.scans.length && !state.counts.dup) { ca.innerHTML = ""; return; }
@@ -616,6 +712,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   }
   function renderSetup() {
     $("dateIn").value = state.date;
+    if (document.activeElement !== $("stationIn")) $("stationIn").value = state.station;
     const chips = $("chips");
     chips.innerHTML = state.flights.map((f, i) =>
       "<li>" + esc(flightLabel(f)) + (i === 0 && state.flights.length > 1 ? '<span class="main-tag">main</span>' : "") +
@@ -623,7 +720,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     const c = $("checking");
     if (state.flights.length) {
       c.hidden = false;
-      c.innerHTML = "Checking for <strong>" + esc(state.flights.map(flightLabel).join(" or ")) + "</strong> on <strong>" + esc(fmtDate(isoToUTC(state.date))) + "</strong>";
+      c.innerHTML = "Checking for <strong>" + esc(state.flights.map(flightLabel).join(" or ")) + "</strong> from <strong>" + esc(state.station) + "</strong> on <strong>" + esc(fmtDate(isoToUTC(state.date))) + "</strong>";
     } else c.hidden = true;
     document.querySelectorAll("[data-sample]").forEach((b) => { b.disabled = !state.flights.length || (b.dataset.sample === "again" && !lastSample); });
     renderBar();
@@ -771,10 +868,23 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   /* ---------- samples ---------- */
   const sampleNames = ["GARCIA/MARIA MS", "NGUYEN/THANH MR", "OKAFOR/CHIDI MR", "LINDQVIST/ANNA MS", "PATEL/RAVI MR", "COHEN/DANA MS"];
   let sampleIdx = 0, lastSample = null;
-  function bcbp(name, pnr, from, to, f, doy, cabin, seat, seq) {
+  // opts: status (check-in code), docType, selectee, issuedDaysBefore -> adds the optional section.
+  function bcbp(name, pnr, from, to, f, doy, cabin, seat, seq, opts) {
+    const o = opts || {};
+    let cond = "";
+    if (o.docType || o.selectee || o.issuedDaysBefore != null) {
+      const fy = isoToUTC(state.date).getUTCFullYear();
+      const iss = new Date(Date.UTC(fy, 0, doy - (o.issuedDaysBefore || 3)));
+      const issued = String(iss.getUTCFullYear() % 10) + String(dayOfYear(iss)).padStart(3, "0");
+      const unique = "0WW" + issued + (o.docType || "B") + f.carrier.padEnd(3);
+      const rep = "016" + "1234567890" + (o.selectee || "0") + "0" + f.carrier.padEnd(3) + "   " + " ".repeat(16) + " " + "   " + " ";
+      const h = (n) => n.toString(16).toUpperCase().padStart(2, "0");
+      cond = ">6" + h(unique.length) + unique + h(rep.length) + rep;
+    }
+    const size = cond.length.toString(16).toUpperCase().padStart(2, "0");
     return "M1" + name.padEnd(20).slice(0, 20) + "E" + pnr.padEnd(7) + from + to + f.carrier.padEnd(3) +
       String(f.num).padStart(4, "0") + (f.suffix || " ") + String(doy).padStart(3, "0") + cabin +
-      seat.padStart(4, "0") + String(seq).padStart(4, "0") + " " + "1" + "00";
+      seat.padStart(4, "0") + String(seq).padStart(4, "0") + " " + (o.status || "1") + size + cond;
   }
   function runSample(kind) {
     unlockAudio();
@@ -786,9 +896,17 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
       let doy = dayOfYear(isoToUTC(state.date));
       if (kind === "flight") f.num = (f.num % 9999) + 1;
       if (kind === "date") doy = doy > 1 ? doy - 1 : 2;
+      const from = kind === "station" ? (state.station === "SLC" ? "DEN" : "SLC") : state.station;
+      const to = from === "DEN" ? "ORD" : "DEN";
       const n = sampleIdx++;
       const pnr = "QX" + String(4000 + n * 37).slice(-4);
-      text = bcbp(sampleNames[n % sampleNames.length], pnr, "DEN", "ORD", f, doy, "Y", (12 + n) + "C", 40 + n * 3);
+      const opts = {
+        notchecked: { status: "0" },
+        receipt: { docType: "I" },
+        standby: { status: "7", selectee: "1", issuedDaysBefore: 2 },
+        old: { issuedDaysBefore: 400 },
+      }[kind];
+      text = bcbp(sampleNames[n % sampleNames.length], pnr, from, to, f, doy, "Y", kind === "standby" ? "STBY" : (12 + n) + "C", 40 + n * 3, opts);
       lastSample = text;
     }
     if (text) handleDecoded(text, "Sample", "sample");
@@ -822,6 +940,18 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     if (resultEl.classList.contains("idle")) showResult({ kind: "idle" });
   });
   $("dateIn").addEventListener("change", (e) => { if (e.target.value) { state.date = e.target.value; renderSetup(); } });
+  $("stationIn").addEventListener("input", (e) => {
+    const v = e.target.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
+    e.target.value = v;
+    const valid = /^[A-Z]{3}$/.test(v);
+    $("stationHint").hidden = valid || v.length < 3;
+    if (valid) { state.station = v; savePrefs(); renderSetup(); }
+  });
+  $("stationIn").addEventListener("blur", (e) => {
+    // Leaving the box with an incomplete code puts back the last good one.
+    $("stationHint").hidden = true;
+    e.target.value = state.station;
+  });
 
   $("soundBtn").addEventListener("click", (e) => {
     state.sound = !state.sound; unlockAudio(); savePrefs();
