@@ -222,7 +222,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   <section class="tally" aria-label="Totals">
     <div class="stat ok"><b id="nMatch">0</b><span>Matched</span></div>
     <div class="stat bad"><b id="nBad">0</b><span>Not this flight</span></div>
-    <div class="stat dup"><b id="nDup">0</b><span>Repeat scans</span></div>
+    <div class="stat dup"><b id="nDup">0</b><span>Repeat matches</span></div>
   </section>
 
   <section style="display:flex;flex-direction:column;gap:8px">
@@ -280,8 +280,11 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   };
   try {
     const f = JSON.parse(localStorage.getItem("bpc.flights") || "[]");
-    if (Array.isArray(f)) state.flights = f.filter((x) => x && x.carrier && Number.isFinite(x.num));
+    if (Array.isArray(f)) state.flights = f.filter((x) => x && x.carrier && Number.isFinite(x.num))
+      .map((x) => ({ carrier: x.carrier, num: x.num, suffix: x.suffix || "" }));
     state.sound = localStorage.getItem("bpc.sound") !== "off";
+    // Settings from earlier versions (sound picker, codeshare lookup) are no longer used.
+    Object.keys(localStorage).filter((k) => /^bpc\.(soundSet|lookupUrl|lookupPass|cs\.)/.test(k)).forEach((k) => localStorage.removeItem(k));
   } catch (e) { /* storage unavailable */ }
   function savePrefs() {
     try {
@@ -316,8 +319,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     if (!m || /^\d\d$/.test(m[1])) return null;
     return { carrier: m[1], num: parseInt(m[2], 10), suffix: m[3] };
   }
-  const flightLabel = (f) => f.carrier + " " + f.num + (f.suffix || "");
-  const sameFlight = (a, b) => a.carrier === b.carrier && a.num === b.num && (a.suffix || "") === (b.suffix || "");
+  const flightLabel = (f) => f.carrier + " " + f.num + (f.suffix || "");  const sameFlight = (a, b) => a.carrier === b.carrier && a.num === b.num && (a.suffix || "") === (b.suffix || "");
 
   /* ---------- IATA BCBP (Resolution 792) parser ---------- */
   function parseBCBP(raw) {
@@ -362,15 +364,17 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
       if (r > rank) { rank = r; best = { leg, index: i }; }
     });
     const legDate = julianToDate(best.leg.julian, target);
-    if (rank === 3) return { status: "match", why: "Pass is for " + flightLabel(best.leg) + " on " + fmtDate(legDate), ...best, legDate };
-    if (rank === 2) return { status: "bad", why: "Right flight, wrong date. This pass is for " + fmtDate(legDate) + ".", ...best, legDate };
-    return { status: "bad", why: "This pass is for " + (Number.isFinite(best.leg.num) ? flightLabel(best.leg) : best.leg.carrier) + " on " + fmtDate(legDate) + ".", ...best, legDate };
+    if (rank === 3) return { status: "match", reason: "", why: "Pass is for " + flightLabel(best.leg) + " on " + fmtDate(legDate), ...best, legDate };
+    if (rank === 2) return { status: "bad", reason: "date", why: "Right flight, wrong date. This pass is for " + fmtDate(legDate) + ".", ...best, legDate };
+    return { status: "bad", reason: "flight", why: "This pass is for " + (Number.isFinite(best.leg.num) ? flightLabel(best.leg) : best.leg.carrier) + " on " + fmtDate(legDate) + ".", ...best, legDate };
   }
 
   /* ---------- sound ---------- */
   let audio = null;
   function unlockAudio() {
     try {
+      // Ask iOS to treat this as media playback so sounds aren't muted by the silent switch.
+      if (navigator.audioSession) navigator.audioSession.type = "playback";
       if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
       if (audio.state === "suspended") audio.resume();
     } catch (e) { audio = null; }
@@ -390,7 +394,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     try {
       if (kind === "match") { tone(988, 0, 0.12, "sine", 0.35); tone(1319, 0.14, 0.2, "sine", 0.35); }
       else if (kind === "bad") { tone(185, 0, 0.2, "square", 0.2); tone(185, 0.26, 0.32, "square", 0.2); }
-      else if (kind === "dup") { tone(660, 0, 0.12, "triangle", 0.3); tone(660, 0.2, 0.12, "triangle", 0.3); tone(660, 0.4, 0.12, "triangle", 0.3); }
+      else if (kind === "dup") { [0, 0.2, 0.4].forEach((t) => tone(660, t, 0.12, "triangle", 0.3)); }
       else { tone(330, 0, 0.22, "triangle", 0.25); }
     } catch (e) { /* ignore */ }
   }
@@ -507,10 +511,18 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
 
     const prior = state.seen.get(text);
     if (prior) {
-      state.counts.dup++;
-      showResult({ kind: "dup", scan: prior });
-      play("dup"); flash("var(--warn)");
-      renderTally();
+      // Re-check against the current flight and date. Only a correct pass turns amber on a repeat;
+      // a wrong pass stays red every time.
+      const again = { ...prior, ...evaluate(prior.pass) };
+      if (again.status === "match") {
+        state.counts.dup++;
+        showResult({ kind: "dup", scan: again, first: prior });
+        play("dup"); flash("var(--warn)");
+        renderTally();
+      } else {
+        showResult({ kind: "bad", scan: again, first: prior });
+        play("bad", again.reason); flash("var(--bad)");
+      }
       return;
     }
     const pass = parseBCBP(text);
@@ -525,7 +537,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     state.scans.unshift(scan);
     state.counts[ev.status]++;
     showResult({ kind: ev.status, scan });
-    play(ev.status); flash(ev.status === "match" ? "var(--ok)" : "var(--bad)");
+    play(ev.status, ev.reason); flash(ev.status === "match" ? "var(--ok)" : "var(--bad)");
     renderTally(); renderLog();
   }
 
@@ -559,10 +571,11 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     } else if (r.kind === "match") {
       word = "Match"; why = r.scan.why; body = detailsHTML(r.scan);
     } else if (r.kind === "bad") {
-      word = "Not this flight"; why = r.scan.why; body = detailsHTML(r.scan);
+      word = "Not this flight"; body = detailsHTML(r.scan);
+      why = r.scan.why + (r.first ? " Also scanned at " + fmtTime(r.first.time) + "." : "");
     } else if (r.kind === "dup") {
       word = "Already scanned";
-      why = "First scanned at " + fmtTime(r.scan.time) + ". It was " + (r.scan.status === "match" ? "a match." : "not for this flight.") + " Not counted again.";
+      why = "Correct flight, but this pass was first scanned at " + fmtTime(r.first.time) + ". Not counted again.";
       body = detailsHTML(r.scan);
     } else if (r.kind === "invalid") {
       word = "Not a boarding pass";
@@ -809,11 +822,12 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     if (resultEl.classList.contains("idle")) showResult({ kind: "idle" });
   });
   $("dateIn").addEventListener("change", (e) => { if (e.target.value) { state.date = e.target.value; renderSetup(); } });
+
   $("soundBtn").addEventListener("click", (e) => {
     state.sound = !state.sound; unlockAudio(); savePrefs();
     e.currentTarget.setAttribute("aria-pressed", String(state.sound));
     e.currentTarget.textContent = state.sound ? "Sound on" : "Sound off";
-    if (state.sound) play("match");
+    if (state.sound) setTimeout(() => play("match"), 50);
   });
   $("primaryBtn").addEventListener("click", () => {
     unlockAudio();
