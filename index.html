@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Pass Check">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="robots" content="noindex">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body { margin: 0; }
+[hidden] { display: none !important; }
+</style><title>Boarding Pass Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one phone-width column, gate-signage result block under the camera, action bar pinned to the bottom. */
+:root {
+  --bg: #eef1f4;
+  --surface: #ffffff;
+  --ink: #15212c;
+  --muted: #586977;
+  --line: #d3dbe2;
+  --accent: #1d5ea6;
+  --accent-ink: #ffffff;
+  --ok: #0d8045;
+  --bad: #c42727;
+  --warn: #e3a008;
+  --warn-ink: #1d1500;
+  --idle: #dfe5ea;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1318; --surface: #151f28; --ink: #e6ecf1; --muted: #93a4b2; --line: #2a3844;
+    --accent: #6aa7ee; --accent-ink: #08131f; --ok: #1d9e5a; --bad: #de4545; --warn: #f0b429;
+    --warn-ink: #1d1500; --idle: #1d2a35; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1318; --surface: #151f28; --ink: #e6ecf1; --muted: #93a4b2; --line: #2a3844;
+  --accent: #6aa7ee; --accent-ink: #08131f; --ok: #1d9e5a; --bad: #de4545; --warn: #f0b429;
+  --warn-ink: #1d1500; --idle: #1d2a35; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--bg); }
+body { color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.45; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.app {
+  max-width: 560px; margin: 0 auto;
+  padding-inline: 16px; padding-block: 12px calc(120px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; gap: 14px;
+}
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { margin: 0; font-family: var(--display); font-weight: 700; font-size: 1.75rem; letter-spacing: 0.01em; text-transform: uppercase; line-height: 1; }
+.chip-btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px;
+  padding: 6px 12px; font-size: 0.85rem; color: var(--muted); white-space: nowrap;
+}
+.chip-btn[aria-pressed="true"] { color: var(--ink); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.field-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.field-row label { min-width: 0; }
+input[type="date"], #flightIn {
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+  padding: 10px 12px; min-height: 46px;
+}
+#flightIn { flex: 1 1 140px; min-width: 0; font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
+input[type="date"] { flex: 1 1 160px; min-width: 0; }
+.btn {
+  border: 0; border-radius: 8px; min-height: 46px; padding: 10px 16px; font-weight: 600;
+  background: var(--accent); color: var(--accent-ink);
+}
+.btn.secondary { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.hint { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.hint.err { color: var(--bad); }
+
+.chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.chips li {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 4px 4px 10px;
+  font-family: var(--mono); font-size: 1rem;
+}
+.chips li .main-tag { font-family: var(--body); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-left: 4px; }
+.chips button { border: 0; background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1; padding: 6px 8px; border-radius: 6px; }
+.checking { font-size: 0.9rem; }
+.checking strong { font-family: var(--mono); font-weight: 500; }
+
+.viewport { position: relative; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: #000; }
+.viewport video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.guide { position: absolute; inset: 22% 8%; border: 2px dashed rgba(255,255,255,0.75); border-radius: 10px; pointer-events: none; }
+.vp-label { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: #fff; font-size: 0.8rem; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.flash { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.flash.on { animation: flash 0.7s ease-out; }
+@keyframes flash { from { opacity: 0.65; } to { opacity: 0; } }
+.mode-note { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.mode-note:empty { display: none; }
+
+/* Result: the big sign */
+.result { border-radius: 14px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); scroll-margin-top: 12px; }
+.sign { padding: 18px 16px 14px; background: var(--idle); color: var(--ink); }
+.sign .word { font-family: var(--display); font-weight: 700; font-size: clamp(2.6rem, 13vw, 4rem); line-height: 0.95; text-transform: uppercase; letter-spacing: 0.01em; text-wrap: balance; }
+.sign .why { margin-top: 6px; font-size: 1rem; font-weight: 500; }
+.result.idle .sign .word { font-size: 1.6rem; }
+.result.idle .sign .why { font-weight: 400; color: var(--muted); }
+.result.match .sign { background: var(--ok); color: #fff; }
+.result.bad .sign { background: var(--bad); color: #fff; }
+.result.dup .sign { background: var(--warn); color: var(--warn-ink); }
+.result.invalid .sign, .result.nobarcode .sign { background: var(--muted); color: var(--surface); }
+.result.busy .sign .word { font-size: 1.6rem; }
+.result.pop .sign { animation: pop 0.25s ease-out; }
+@keyframes pop { from { transform: scale(0.97); } to { transform: none; } }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding: 14px 16px 16px; margin: 0; }
+.details div { min-width: 0; }
+.details .wide { grid-column: 1 / -1; }
+.details dt { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.details dd { margin: 2px 0 0; font-size: 1.05rem; font-weight: 500; overflow-wrap: anywhere; }
+.details dd.mono { font-family: var(--mono); }
+.details .name { font-size: 1.3rem; font-weight: 600; }
+.raw { padding: 0 16px 14px; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+
+.tally { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.stat b { display: block; font-family: var(--display); font-size: 2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 0.78rem; color: var(--muted); }
+.stat.ok b { color: var(--ok); }
+.stat.bad b { color: var(--bad); }
+.stat.dup b { color: var(--ink); }
+.stat.dup b::before { content: ""; display: inline-block; width: 0.45em; height: 0.45em; border-radius: 50%; background: var(--warn); margin-right: 0.2em; vertical-align: middle; }
+
+.log-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.log-head h2 { margin: 0; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.confirm { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; flex-wrap: wrap; }
+.link-btn { border: 0; background: transparent; color: var(--accent); font-weight: 600; padding: 6px 4px; }
+.link-btn.danger { color: var(--bad); }
+.log { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.log li { display: grid; grid-template-columns: 4px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); }
+.log li:first-child { border-top: 0; }
+.log .bar { align-self: stretch; border-radius: 0 3px 3px 0; }
+.log li.match .bar { background: var(--ok); }
+.log li.bad .bar { background: var(--bad); }
+.log .who { font-weight: 600; overflow-wrap: anywhere; }
+.log .what { font-size: 0.85rem; color: var(--muted); font-family: var(--mono); }
+.log .when { font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.log .pill { display: block; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.log li.match .pill { color: var(--ok); }
+.log li.bad .pill { color: var(--bad); }
+.log .empty { display: block; padding: 14px; color: var(--muted); font-size: 0.9rem; border: 0; }
+
+details.testing { font-size: 0.9rem; }
+details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.test-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.test-row .btn { min-height: 40px; padding: 8px 12px; font-size: 0.9rem; }
+.privacy { margin: 0; font-size: 0.8rem; color: var(--muted); }
+
+.actionbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+}
+.actionbar .inner { max-width: 560px; margin: 0 auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.actionbar .btn { flex: 1 1 140px; min-height: 54px; font-size: 1.05rem; }
+.actionbar .note { flex-basis: 100%; margin: 0; font-size: 0.8rem; color: var(--muted); text-align: center; }
+.actionbar .note:empty { display: none; }
+.vh { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .flash.on, .result.pop .sign { animation: none; }
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1>Boarding Pass Check</h1>
+    <button id="soundBtn" class="chip-btn" type="button" aria-pressed="true">Sound on</button>
+  </header>
+
+  <section class="panel" aria-label="Flight to check against">
+    <div class="field-row">
+      <label for="dateIn" class="label" style="flex-basis:100%">Flight date</label>
+      <input type="date" id="dateIn">
+    </div>
+    <label for="flightIn" class="label">Flight numbers</label>
+    <form id="flightForm" class="field-row" autocomplete="off">
+      <input id="flightIn" placeholder="UA1234" autocapitalize="characters" spellcheck="false" enterkeyhint="done">
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <p class="hint" id="flightHint">Airline code then flight number. Add codeshare numbers too; a pass matching any of them counts.</p>
+    <ul id="chips" class="chips"></ul>
+    <p class="checking" id="checking" hidden></p>
+  </section>
+
+  <div class="viewport" id="viewport" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <div class="guide"></div>
+    <div class="vp-label">Fit the barcode inside the box</div>
+    <div class="flash" id="flash"></div>
+  </div>
+  <p class="mode-note" id="modeNote"></p>
+
+  <section id="result" class="result idle" aria-live="polite"></section>
+
+  <section class="tally" aria-label="Totals">
+    <div class="stat ok"><b id="nMatch">0</b><span>Matched</span></div>
+    <div class="stat bad"><b id="nBad">0</b><span>Not this flight</span></div>
+    <div class="stat dup"><b id="nDup">0</b><span>Repeat scans</span></div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:8px">
+    <div class="log-head">
+      <h2 id="logTitle">Scanned passes</h2>
+      <div id="clearArea"></div>
+    </div>
+    <ol class="log" id="log"></ol>
+  </section>
+
+  <details class="testing" id="testing">
+    <summary>Try it without a boarding pass</summary>
+    <p class="hint" style="margin-top:6px">These buttons feed made-up passes for your first flight number into the checker, as if you had scanned them.</p>
+    <div class="test-row">
+      <button class="btn secondary" type="button" data-sample="match">Matching pass</button>
+      <button class="btn secondary" type="button" data-sample="flight">Wrong flight</button>
+      <button class="btn secondary" type="button" data-sample="date">Wrong date</button>
+      <button class="btn secondary" type="button" data-sample="again">Same pass again</button>
+    </div>
+  </details>
+
+  <p class="privacy">Barcodes are read on this phone. Nothing is uploaded, and the scan list is wiped when you close or reload the page.</p>
+</div>
+
+<div class="actionbar">
+  <div class="inner">
+    <button class="btn" id="primaryBtn" type="button">Start camera</button>
+    <button class="btn secondary" id="secondaryBtn" type="button">Take photo</button>
+    <p class="note" id="barNote"></p>
+  </div>
+</div>
+<input type="file" id="photoIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
+<input type="file" id="pickIn" class="vh" accept="image/*" tabindex="-1" aria-hidden="true">
+<canvas id="work" hidden></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  /* ---------- state ---------- */
+  const state = {
+    flights: [],            // {carrier, num, suffix}
+    date: todayISO(),
+    scans: [],              // newest first
+    seen: new Map(),        // raw text -> scan
+    counts: { match: 0, bad: 0, dup: 0 },
+    sound: true,
+    mode: "unknown",        // unknown | live | photo
+    busy: false,
+    confirmClear: false,
+  };
+  try {
+    const f = JSON.parse(localStorage.getItem("bpc.flights") || "[]");
+    if (Array.isArray(f)) state.flights = f.filter((x) => x && x.carrier && Number.isFinite(x.num));
+    state.sound = localStorage.getItem("bpc.sound") !== "off";
+  } catch (e) { /* storage unavailable */ }
+  function savePrefs() {
+    try {
+      localStorage.setItem("bpc.flights", JSON.stringify(state.flights));
+      localStorage.setItem("bpc.sound", state.sound ? "on" : "off");
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- dates (BCBP uses day-of-year, no year) ---------- */
+  function todayISO() {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function isoToUTC(iso) { const [y, m, d] = iso.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); }
+  function dayOfYear(utc) { return Math.round((utc - Date.UTC(utc.getUTCFullYear(), 0, 0)) / 864e5); }
+  function julianToDate(j, refUTC) {
+    if (!Number.isFinite(j) || j < 1 || j > 366) return null;
+    let best = null;
+    for (const y of [refUTC.getUTCFullYear() - 1, refUTC.getUTCFullYear(), refUTC.getUTCFullYear() + 1]) {
+      const d = new Date(Date.UTC(y, 0, j));
+      if (!best || Math.abs(d - refUTC) < Math.abs(best - refUTC)) best = d;
+    }
+    return best;
+  }
+  const fmtDate = (utc) => utc ? utc.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "Unknown date";
+  const fmtTime = (ms) => new Date(ms).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+  /* ---------- flight entry ---------- */
+  function parseFlight(s) {
+    const t = String(s).toUpperCase().replace(/[\s\-]/g, "");
+    const m = t.match(/^([A-Z]{3}|[A-Z0-9]{2})0*(\d{1,4})([A-Z]?)$/);
+    if (!m || /^\d\d$/.test(m[1])) return null;
+    return { carrier: m[1], num: parseInt(m[2], 10), suffix: m[3] };
+  }
+  const flightLabel = (f) => f.carrier + " " + f.num + (f.suffix || "");
+  const sameFlight = (a, b) => a.carrier === b.carrier && a.num === b.num && (a.suffix || "") === (b.suffix || "");
+
+  /* ---------- IATA BCBP (Resolution 792) parser ---------- */
+  function parseBCBP(raw) {
+    const t = String(raw).replace(/^\s+/, "");
+    if (t.length < 60 || !/^[MS][1-9]/.test(t)) return null;
+    const legCount = parseInt(t[1], 10);
+    const name = t.slice(2, 22).trim();
+    const legs = [];
+    let pos = 23;
+    for (let i = 0; i < legCount; i++) {
+      if (pos + 37 > t.length) break;
+      const s = t.substr(pos, 37);
+      const fr = s.slice(16, 21).trim();
+      const fm = fr.match(/^0*(\d{1,4})([A-Z]?)$/);
+      const leg = {
+        pnr: s.slice(0, 7).trim(),
+        from: s.slice(7, 10), to: s.slice(10, 13),
+        carrier: s.slice(13, 16).trim(),
+        num: fm ? parseInt(fm[1], 10) : NaN, suffix: fm ? fm[2] : "",
+        julian: parseInt(s.slice(21, 24), 10),
+        cabin: s[24].trim(),
+        seat: s.slice(25, 29).trim().replace(/^0+(?=\d)/, ""),
+        seq: s.slice(29, 34).trim().replace(/^0+(?=\d)/, ""),
+      };
+      if (!/^[A-Z]{3}$/.test(leg.from) || !/^[A-Z]{3}$/.test(leg.to) || !leg.carrier) break;
+      legs.push(leg);
+      const v = parseInt(s.slice(35, 37), 16);
+      pos += 37 + (Number.isFinite(v) ? v : 0);
+    }
+    if (!legs.length) return null;
+    return { name, legs, legCount };
+  }
+
+  function evaluate(pass) {
+    const target = isoToUTC(state.date);
+    const tDoy = dayOfYear(target);
+    let best = null, rank = 0;
+    pass.legs.forEach((leg, i) => {
+      const fOK = state.flights.some((f) => sameFlight(f, leg));
+      const dOK = leg.julian === tDoy;
+      const r = fOK && dOK ? 3 : fOK ? 2 : 1;
+      if (r > rank) { rank = r; best = { leg, index: i }; }
+    });
+    const legDate = julianToDate(best.leg.julian, target);
+    if (rank === 3) return { status: "match", why: "Pass is for " + flightLabel(best.leg) + " on " + fmtDate(legDate), ...best, legDate };
+    if (rank === 2) return { status: "bad", why: "Right flight, wrong date. This pass is for " + fmtDate(legDate) + ".", ...best, legDate };
+    return { status: "bad", why: "This pass is for " + (Number.isFinite(best.leg.num) ? flightLabel(best.leg) : best.leg.carrier) + " on " + fmtDate(legDate) + ".", ...best, legDate };
+  }
+
+  /* ---------- sound ---------- */
+  let audio = null;
+  function unlockAudio() {
+    try {
+      if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === "suspended") audio.resume();
+    } catch (e) { audio = null; }
+  }
+  function tone(freq, at, dur, type, gain) {
+    const t0 = audio.currentTime + at;
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(audio.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function play(kind) {
+    if (!state.sound || !audio) return;
+    try {
+      if (kind === "match") { tone(988, 0, 0.12, "sine", 0.35); tone(1319, 0.14, 0.2, "sine", 0.35); }
+      else if (kind === "bad") { tone(185, 0, 0.2, "square", 0.2); tone(185, 0.26, 0.32, "square", 0.2); }
+      else if (kind === "dup") { tone(660, 0, 0.12, "triangle", 0.3); tone(660, 0.2, 0.12, "triangle", 0.3); tone(660, 0.4, 0.12, "triangle", 0.3); }
+      else { tone(330, 0, 0.22, "triangle", 0.25); }
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- barcode decoding (ZXing, runs locally) ---------- */
+  let reader = null;
+  function getReader() {
+    if (reader) return reader;
+    if (!window.ZXing) return null;
+    const Z = window.ZXing;
+    reader = new Z.MultiFormatReader();
+    const hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.PDF_417, Z.BarcodeFormat.AZTEC, Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.DATA_MATRIX]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    reader.setHints(hints);
+    return reader;
+  }
+  const formatNames = { PDF_417: "PDF417", AZTEC: "Aztec", QR_CODE: "QR", DATA_MATRIX: "Data Matrix" };
+  function tryDecode(gray, w, h, global) {
+    const Z = window.ZXing, r = getReader();
+    if (!r) return null;
+    try {
+      const src = new Z.RGBLuminanceSource(gray, w, h);
+      const bin = global ? new Z.GlobalHistogramBinarizer(src) : new Z.HybridBinarizer(src);
+      const res = r.decodeWithState(new Z.BinaryBitmap(bin));
+      const f = Z.BarcodeFormat[res.getBarcodeFormat()];
+      return { text: res.getText(), format: formatNames[f] || f };
+    } catch (e) { return null; }
+    finally { try { r.reset(); } catch (e) {} }
+  }
+  const work = $("work");
+  const wctx = work.getContext("2d", { willReadFrequently: true });
+  function grayFrom(source, sw, sh, maxDim) {
+    const scale = Math.min(1, maxDim / Math.max(sw, sh));
+    const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+    work.width = w; work.height = h;
+    wctx.drawImage(source, 0, 0, w, h);
+    const px = wctx.getImageData(0, 0, w, h).data;
+    const g = new Uint8ClampedArray(w * h);
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (px[j] + 2 * px[j + 1] + px[j + 2]) >> 2;
+    return { g, w, h };
+  }
+  function rotate90(img) {
+    const { g, w, h } = img, out = new Uint8ClampedArray(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) out[x * h + (h - 1 - y)] = g[y * w + x];
+    return { g: out, w: h, h: w };
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  async function decodeImageFile(file) {
+    let src, sw, sh, url = null;
+    try {
+      if (window.createImageBitmap) { src = await createImageBitmap(file); sw = src.width; sh = src.height; }
+    } catch (e) { src = null; }
+    if (!src) {
+      url = URL.createObjectURL(file);
+      src = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+      sw = src.naturalWidth; sh = src.naturalHeight;
+    }
+    try {
+      for (const maxDim of [1800, 2600, 1200]) {
+        if (maxDim > 1800 && Math.max(sw, sh) <= 1800) continue;
+        let img = grayFrom(src, sw, sh, maxDim);
+        for (let rot = 0; rot < 2; rot++) {
+          await tick();
+          const r = tryDecode(img.g, img.w, img.h, false) || tryDecode(img.g, img.w, img.h, true);
+          if (r) return r;
+          img = rotate90(img);
+        }
+      }
+      return null;
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      if (src && src.close) src.close();
+    }
+  }
+
+  /* ---------- handling a decoded barcode ---------- */
+  let lastRaw = null, lastSeen = 0;
+  function handleDecoded(text, format, source) {
+    const now = Date.now();
+    if (source === "live" && text === lastRaw && now - lastSeen < 3000) { lastSeen = now; return; }
+    lastRaw = text; lastSeen = now;
+
+    const prior = state.seen.get(text);
+    if (prior) {
+      state.counts.dup++;
+      showResult({ kind: "dup", scan: prior });
+      play("dup"); flash("var(--warn)");
+      renderTally();
+      return;
+    }
+    const pass = parseBCBP(text);
+    if (!pass) {
+      showResult({ kind: "invalid", text, format });
+      play("invalid"); flash("var(--muted)");
+      return;
+    }
+    const ev = evaluate(pass);
+    const scan = { id: now + Math.random(), raw: text, format, pass, time: now, target: state.flights.map(flightLabel).join(" / ") + " · " + fmtDate(isoToUTC(state.date)), ...ev };
+    state.seen.set(text, scan);
+    state.scans.unshift(scan);
+    state.counts[ev.status]++;
+    showResult({ kind: ev.status, scan });
+    play(ev.status); flash(ev.status === "match" ? "var(--ok)" : "var(--bad)");
+    renderTally(); renderLog();
+  }
+
+  /* ---------- rendering ---------- */
+  const resultEl = $("result");
+  function detailsHTML(scan) {
+    const { pass, leg, index, legDate } = scan;
+    const rows = [
+      ["Passenger", '<span class="name">' + esc(pass.name || "Not printed") + "</span>", "wide"],
+      ["Flight", esc(Number.isFinite(leg.num) ? flightLabel(leg) : leg.carrier), "mono"],
+      ["Date", esc(fmtDate(legDate)), ""],
+      ["Route", esc(leg.from) + " → " + esc(leg.to), "mono"],
+      ["Seat", esc(leg.seat || "None"), "mono"],
+      ["Class", esc(leg.cabin || "–"), "mono"],
+      ["Sequence", esc(leg.seq || "–"), "mono"],
+      ["Confirmation", esc(leg.pnr || "–"), "mono"],
+      ["Barcode", esc(scan.format || "–") + (pass.legs.length > 1 ? " · leg " + (index + 1) + " of " + pass.legs.length : ""), ""],
+    ];
+    return '<dl class="details">' + rows.map(([k, v, c]) =>
+      '<div class="' + (c === "wide" ? "wide" : "") + '"><dt>' + k + '</dt><dd class="' + (c === "mono" ? "mono" : "") + '">' + v + "</dd></div>").join("") + "</dl>";
+  }
+  function showResult(r) {
+    let cls = r.kind, word = "", why = "", body = "";
+    if (r.kind === "idle") {
+      word = state.flights.length ? "Ready to scan" : "Add your flight";
+      why = state.flights.length
+        ? "Start the camera, or take a photo of a boarding pass. Results show here."
+        : "Enter the flight number above, then scan boarding passes to see if they're for that flight.";
+    } else if (r.kind === "busy") {
+      word = "Reading barcode…"; why = "This takes a second or two.";
+    } else if (r.kind === "match") {
+      word = "Match"; why = r.scan.why; body = detailsHTML(r.scan);
+    } else if (r.kind === "bad") {
+      word = "Not this flight"; why = r.scan.why; body = detailsHTML(r.scan);
+    } else if (r.kind === "dup") {
+      word = "Already scanned";
+      why = "First scanned at " + fmtTime(r.scan.time) + ". It was " + (r.scan.status === "match" ? "a match." : "not for this flight.") + " Not counted again.";
+      body = detailsHTML(r.scan);
+    } else if (r.kind === "invalid") {
+      word = "Not a boarding pass";
+      why = "Found a " + (r.format || "barcode") + " code, but it isn't in the airline boarding pass format.";
+      body = '<p class="raw">' + esc(r.text.slice(0, 160)) + (r.text.length > 160 ? "…" : "") + "</p>";
+    } else if (r.kind === "nobarcode") {
+      word = "No barcode found";
+      why = "Get closer so the barcode fills most of the photo, hold steady, and tilt to avoid glare.";
+    }
+    resultEl.className = "result " + cls;
+    resultEl.innerHTML = '<div class="sign"><div class="word">' + esc(word) + '</div><div class="why">' + esc(why) + "</div></div>" + body;
+    if (r.kind !== "idle" && r.kind !== "busy") {
+      void resultEl.offsetWidth; resultEl.classList.add("pop");
+      if (state.mode !== "live") resultEl.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
+  }
+  function renderTally() {
+    $("nMatch").textContent = state.counts.match;
+    $("nBad").textContent = state.counts.bad;
+    $("nDup").textContent = state.counts.dup;
+  }
+  function renderLog() {
+    const log = $("log");
+    $("logTitle").textContent = "Scanned passes" + (state.scans.length ? " (" + state.scans.length + ")" : "");
+    if (!state.scans.length) {
+      log.innerHTML = '<li class="empty">Each pass you scan is listed here, newest first.</li>';
+    } else {
+      log.innerHTML = state.scans.map((s) =>
+        '<li class="' + s.status + '"><span class="bar"></span><div style="min-width:0"><div class="who">' + esc(s.pass.name || "Unnamed") +
+        '</div><div class="what">' + esc((Number.isFinite(s.leg.num) ? flightLabel(s.leg) : s.leg.carrier) + " · " + fmtDate(s.legDate) + " · " + (s.leg.seat || "no seat")) +
+        '</div></div><div class="when"><span class="pill">' + (s.status === "match" ? "Match" : "Not this flight") + "</span>" + fmtTime(s.time) + "</div></li>").join("");
+    }
+    const ca = $("clearArea");
+    if (!state.scans.length && !state.counts.dup) { ca.innerHTML = ""; return; }
+    ca.innerHTML = state.confirmClear
+      ? '<div class="confirm"><span>Clear all scans?</span><button class="link-btn danger" id="clearYes" type="button">Clear</button><button class="link-btn" id="clearNo" type="button">Cancel</button></div>'
+      : '<button class="link-btn" id="clearBtn" type="button">Clear list</button>';
+  }
+  function renderSetup() {
+    $("dateIn").value = state.date;
+    const chips = $("chips");
+    chips.innerHTML = state.flights.map((f, i) =>
+      "<li>" + esc(flightLabel(f)) + (i === 0 && state.flights.length > 1 ? '<span class="main-tag">main</span>' : "") +
+      '<button type="button" data-remove="' + i + '" aria-label="Remove ' + esc(flightLabel(f)) + '">×</button></li>').join("");
+    const c = $("checking");
+    if (state.flights.length) {
+      c.hidden = false;
+      c.innerHTML = "Checking for <strong>" + esc(state.flights.map(flightLabel).join(" or ")) + "</strong> on <strong>" + esc(fmtDate(isoToUTC(state.date))) + "</strong>";
+    } else c.hidden = true;
+    document.querySelectorAll("[data-sample]").forEach((b) => { b.disabled = !state.flights.length || (b.dataset.sample === "again" && !lastSample); });
+    renderBar();
+  }
+  function renderBar() {
+    const p = $("primaryBtn"), s = $("secondaryBtn"), note = $("barNote");
+    const ready = state.flights.length > 0;
+    if (state.mode === "live") {
+      p.textContent = "Stop camera"; p.className = "btn secondary"; p.disabled = false;
+      s.hidden = true; note.textContent = "Scanning. Hold each pass up to the camera.";
+    } else if (state.mode === "photo") {
+      p.textContent = "Take photo of pass"; p.className = "btn"; p.disabled = !ready || state.busy;
+      s.textContent = "Choose image"; s.hidden = false; s.disabled = !ready || state.busy;
+      note.textContent = ready ? "" : "Add a flight number to start.";
+    } else {
+      p.textContent = "Start camera"; p.className = "btn"; p.disabled = !ready;
+      s.textContent = "Take photo"; s.hidden = false; s.disabled = !ready || state.busy;
+      note.textContent = ready ? "" : "Add a flight number to start.";
+    }
+  }
+  let flashTimer = null;
+  function flash(color) {
+    if (state.mode !== "live") return;
+    const f = $("flash");
+    f.style.background = color;
+    f.classList.remove("on"); void f.offsetWidth; f.classList.add("on");
+    clearTimeout(flashTimer); flashTimer = setTimeout(() => f.classList.remove("on"), 800);
+  }
+
+  /* ---------- live camera ---------- */
+  let stream = null, liveTimer = null, frameNo = 0, wakeLock = null;
+  const video = $("video");
+  async function startLive() {
+    unlockAudio();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return toPhotoMode();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    } catch (e) { return toPhotoMode(); }
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    stream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopLive));
+    state.mode = "live"; $("viewport").hidden = false; $("modeNote").textContent = "";
+    requestWake(); renderBar();
+    showResult({ kind: "idle" });
+    $("result").querySelector(".word").textContent = "Scanning…";
+    $("result").querySelector(".why").textContent = "Hold a boarding pass barcode inside the box.";
+    liveLoop();
+  }
+  function stopLive() {
+    clearTimeout(liveTimer);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null; video.srcObject = null;
+    $("viewport").hidden = true;
+    state.mode = "unknown";
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    renderBar();
+  }
+  function liveLoop() {
+    if (state.mode !== "live") return;
+    if (video.readyState >= 2 && video.videoWidth) {
+      let img = grayFrom(video, video.videoWidth, video.videoHeight, 1280);
+      if (frameNo++ % 3 === 2) img = rotate90(img);
+      const r = tryDecode(img.g, img.w, img.h, false);
+      if (r) handleDecoded(r.text, r.format, "live");
+    }
+    liveTimer = setTimeout(liveLoop, 120);
+  }
+  async function requestWake() {
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.mode === "live") {
+      const live = stream && stream.getVideoTracks().some((t) => t.readyState === "live");
+      if (!live) stopLive(); else requestWake();
+    }
+  });
+  function toPhotoMode() {
+    state.mode = "photo";
+    $("modeNote").textContent = "Safari didn't give this page camera access. To fix it, tap the \"aA\" button in the address bar, choose Website Settings, set Camera to Allow, then reload. Until then you can take a photo of each pass.";
+    renderBar();
+  }
+
+  /* ---------- photo mode ---------- */
+  async function onPhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!getReader()) { showResult({ kind: "nobarcode" }); $("result").querySelector(".why").textContent = "The barcode reader didn't load. Check your connection and reload the page."; return; }
+    state.busy = true; renderBar(); showResult({ kind: "busy" });
+    let r = null;
+    try { r = await decodeImageFile(file); } catch (err) { r = null; }
+    state.busy = false; renderBar();
+    if (r) handleDecoded(r.text, r.format, "photo");
+    else { showResult({ kind: "nobarcode" }); play("invalid"); }
+  }
+  $("photoIn").addEventListener("change", onPhoto);
+  $("pickIn").addEventListener("change", onPhoto);
+
+  /* ---------- samples ---------- */
+  const sampleNames = ["GARCIA/MARIA MS", "NGUYEN/THANH MR", "OKAFOR/CHIDI MR", "LINDQVIST/ANNA MS", "PATEL/RAVI MR", "COHEN/DANA MS"];
+  let sampleIdx = 0, lastSample = null;
+  function bcbp(name, pnr, from, to, f, doy, cabin, seat, seq) {
+    return "M1" + name.padEnd(20).slice(0, 20) + "E" + pnr.padEnd(7) + from + to + f.carrier.padEnd(3) +
+      String(f.num).padStart(4, "0") + (f.suffix || " ") + String(doy).padStart(3, "0") + cabin +
+      seat.padStart(4, "0") + String(seq).padStart(4, "0") + " " + "1" + "00";
+  }
+  function runSample(kind) {
+    unlockAudio();
+    if (!state.flights.length) return;
+    let text;
+    if (kind === "again") text = lastSample;
+    else {
+      const f = { ...state.flights[0] };
+      let doy = dayOfYear(isoToUTC(state.date));
+      if (kind === "flight") f.num = (f.num % 9999) + 1;
+      if (kind === "date") doy = doy > 1 ? doy - 1 : 2;
+      const n = sampleIdx++;
+      const pnr = "QX" + String(4000 + n * 37).slice(-4);
+      text = bcbp(sampleNames[n % sampleNames.length], pnr, "DEN", "ORD", f, doy, "Y", (12 + n) + "C", 40 + n * 3);
+      lastSample = text;
+    }
+    if (text) handleDecoded(text, "Sample", "sample");
+    renderSetup();
+  }
+
+  /* ---------- events ---------- */
+  const flightIn = $("flightIn"), hint = $("flightHint");
+  const defaultHint = hint.textContent;
+  flightIn.addEventListener("input", () => {
+    const v = flightIn.value.trim();
+    const f = parseFlight(v);
+    hint.classList.remove("err");
+    hint.textContent = !v ? defaultHint : f ? "Will add " + flightLabel(f) + "." : "Type the airline code then the number, like UA1234 or B6 101.";
+  });
+  $("flightForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = parseFlight(flightIn.value);
+    if (!f) { hint.textContent = "That doesn't look like a flight number. Use the airline code then the number, like UA1234."; hint.classList.add("err"); return; }
+    if (!state.flights.some((x) => sameFlight(x, f))) state.flights.push(f);
+    flightIn.value = ""; hint.textContent = defaultHint; hint.classList.remove("err");
+    savePrefs(); renderSetup();
+    if (resultEl.classList.contains("idle")) showResult({ kind: "idle" });
+  });
+  $("chips").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-remove]");
+    if (!b) return;
+    state.flights.splice(Number(b.dataset.remove), 1);
+    savePrefs(); renderSetup();
+    if (!state.flights.length && state.mode === "live") stopLive();
+    if (resultEl.classList.contains("idle")) showResult({ kind: "idle" });
+  });
+  $("dateIn").addEventListener("change", (e) => { if (e.target.value) { state.date = e.target.value; renderSetup(); } });
+  $("soundBtn").addEventListener("click", (e) => {
+    state.sound = !state.sound; unlockAudio(); savePrefs();
+    e.currentTarget.setAttribute("aria-pressed", String(state.sound));
+    e.currentTarget.textContent = state.sound ? "Sound on" : "Sound off";
+    if (state.sound) play("match");
+  });
+  $("primaryBtn").addEventListener("click", () => {
+    unlockAudio();
+    if (state.mode === "live") stopLive();
+    else if (state.mode === "photo") $("photoIn").click();
+    else startLive();
+  });
+  $("secondaryBtn").addEventListener("click", () => {
+    unlockAudio();
+    if (state.mode === "photo") $("pickIn").click();
+    else $("photoIn").click();
+  });
+  $("testing").addEventListener("click", (e) => { const b = e.target.closest("[data-sample]"); if (b) runSample(b.dataset.sample); });
+  $("clearArea").addEventListener("click", (e) => {
+    const id = e.target.id;
+    if (id === "clearBtn") state.confirmClear = true;
+    else if (id === "clearNo") state.confirmClear = false;
+    else if (id === "clearYes") {
+      state.confirmClear = false; state.scans = []; state.seen.clear();
+      state.counts = { match: 0, bad: 0, dup: 0 }; lastRaw = null;
+      renderTally(); showResult({ kind: "idle" });
+    }
+    renderLog();
+  });
+
+  /* ---------- boot ---------- */
+  $("soundBtn").setAttribute("aria-pressed", String(state.sound));
+  $("soundBtn").textContent = state.sound ? "Sound on" : "Sound off";
+  renderSetup(); renderTally(); renderLog(); showResult({ kind: "idle" });
+})();
+</script>
+
+</body>
+</html>
