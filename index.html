@@ -102,6 +102,9 @@ input[type="date"] { flex: 1 1 160px; min-width: 0; }
 .viewport video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .guide { position: absolute; inset: 22% 8%; border: 2px dashed rgba(255,255,255,0.75); border-radius: 10px; pointer-events: none; }
 .vp-label { position: absolute; left: 0; right: 0; bottom: 8px; text-align: center; color: #fff; font-size: 0.8rem; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.zoom { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; z-index: 2; }
+.zoom button { border: 0; border-radius: 999px; min-width: 44px; min-height: 36px; padding: 4px 8px; background: rgba(0,0,0,0.55); color: #fff; font-size: 0.85rem; font-weight: 600; }
+.zoom button[aria-pressed="true"] { background: #fff; color: #000; }
 .flash { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .flash.on { animation: flash 0.7s ease-out; }
 @keyframes flash { from { opacity: 0.65; } to { opacity: 0; } }
@@ -207,10 +210,12 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   <div class="viewport" id="viewport" hidden>
     <video id="video" playsinline muted autoplay></video>
     <div class="guide"></div>
-    <div class="vp-label">Fit the barcode inside the box</div>
+    <div class="vp-label">Fit the barcode inside the box, about 20–30 cm away</div>
+    <div class="zoom" id="zoomBar" hidden></div>
     <div class="flash" id="flash"></div>
   </div>
   <p class="mode-note" id="modeNote"></p>
+  <p class="mode-note" id="engineNote"></p>
 
   <section id="result" class="result idle" aria-live="polite"></section>
 
@@ -254,6 +259,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
 <canvas id="work" hidden></canvas>
 
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/iife/reader/index.js"></script>
 <script>
 (function () {
   "use strict";
@@ -417,15 +423,44 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   }
   const work = $("work");
   const wctx = work.getContext("2d", { willReadFrequently: true });
-  function grayFrom(source, sw, sh, maxDim) {
+  function frameData(source, sx, sy, sw, sh, maxDim) {
     const scale = Math.min(1, maxDim / Math.max(sw, sh));
     const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
     work.width = w; work.height = h;
-    wctx.drawImage(source, 0, 0, w, h);
-    const px = wctx.getImageData(0, 0, w, h).data;
-    const g = new Uint8ClampedArray(w * h);
+    wctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
+    return wctx.getImageData(0, 0, w, h);
+  }
+  function toGray(id) {
+    const px = id.data, g = new Uint8ClampedArray(id.width * id.height);
     for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = (px[j] + 2 * px[j + 1] + px[j + 2]) >> 2;
-    return { g, w, h };
+    return { g, w: id.width, h: id.height };
+  }
+  function grayFrom(source, sw, sh, maxDim) {
+    return toGray(frameData(source, 0, 0, sw, sh, maxDim));
+  }
+
+  /* High-accuracy reader (zxing-cpp compiled to WebAssembly); the JS reader above is the fallback. */
+  const WASM_OPTS = { formats: ["PDF417", "Aztec", "QRCode", "DataMatrix"], tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, textMode: "Plain", maxNumberOfSymbols: 1 };
+  const wasmFormatNames = { PDF417: "PDF417", Aztec: "Aztec", QRCode: "QR", DataMatrix: "Data Matrix" };
+  let wasmReady = false;
+  if (window.ZXingWASM) {
+    try {
+      Promise.resolve(ZXingWASM.prepareZXingModule({ fireImmediately: true }))
+        .then(() => { wasmReady = true; renderEngine(); })
+        .catch(() => renderEngine());
+    } catch (e) { /* fall back to JS reader */ }
+  }
+  async function wasmDecode(input) {
+    try {
+      const res = await ZXingWASM.readBarcodes(input, WASM_OPTS);
+      const hit = res.find((r) => r.text && !r.error);
+      return hit ? { text: hit.text, format: wasmFormatNames[hit.format] || hit.format } : null;
+    } catch (e) { return null; }
+  }
+  async function decodeFrame(id) {
+    if (wasmReady) return wasmDecode(id);
+    const img = toGray(id);
+    return tryDecode(img.g, img.w, img.h, false);
   }
   function rotate90(img) {
     const { g, w, h } = img, out = new Uint8ClampedArray(w * h);
@@ -435,6 +470,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   const tick = () => new Promise((r) => setTimeout(r, 0));
 
   async function decodeImageFile(file) {
+    if (wasmReady) { const w = await wasmDecode(file); if (w) return w; }
     let src, sw, sh, url = null;
     try {
       if (window.createImageBitmap) { src = await createImageBitmap(file); sw = src.width; sh = src.height; }
@@ -616,7 +652,9 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     video.srcObject = stream;
     try { await video.play(); } catch (e) {}
     stream.getVideoTracks().forEach((t) => t.addEventListener("ended", stopLive));
-    state.mode = "live"; $("viewport").hidden = false; $("modeNote").textContent = "";
+    state.mode = "live"; $("viewport").hidden = false;
+    $("modeNote").textContent = "If the barcode looks blurry, move the pass farther away or tap a zoom button.";
+    setupCameraControls(); renderEngine();
     requestWake(); renderBar();
     showResult({ kind: "idle" });
     $("result").querySelector(".word").textContent = "Scanning…";
@@ -632,16 +670,60 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
     renderBar();
   }
-  function liveLoop() {
+  let reads = 0, readsSince = performance.now();
+  async function liveLoop() {
     if (state.mode !== "live") return;
     if (video.readyState >= 2 && video.videoWidth) {
-      let img = grayFrom(video, video.videoWidth, video.videoHeight, 1280);
-      if (frameNo++ % 3 === 2) img = rotate90(img);
-      const r = tryDecode(img.g, img.w, img.h, false);
+      const vw = video.videoWidth, vh = video.videoHeight;
+      // Alternate between the middle of the frame at full resolution and the whole frame.
+      const id = frameNo++ % 2 === 0
+        ? frameData(video, vw * 0.05, vh * 0.2, vw * 0.9, vh * 0.6, 2000)
+        : frameData(video, 0, 0, vw, vh, 2000);
+      const r = await decodeFrame(id);
+      reads++;
+      if (state.mode !== "live") return;
       if (r) handleDecoded(r.text, r.format, "live");
+      const now = performance.now();
+      if (now - readsSince > 1000) { renderEngine(Math.round(reads * 1000 / (now - readsSince))); reads = 0; readsSince = now; }
     }
-    liveTimer = setTimeout(liveLoop, 120);
+    liveTimer = setTimeout(liveLoop, 40);
   }
+  function renderEngine(rate) {
+    const el = $("engineNote");
+    if (!el) return;
+    el.textContent = "Reader: " + (wasmReady ? "high accuracy" : window.ZXingWASM ? "loading high accuracy…" : "basic") +
+      (state.mode === "live" && rate ? " · " + rate + " reads per second" : "");
+  }
+
+  /* zoom + focus (helps phones whose main camera can't focus up close) */
+  let zoomLevels = [], zoomTrack = null;
+  function setupCameraControls() {
+    const bar = $("zoomBar");
+    bar.hidden = true; bar.innerHTML = "";
+    zoomTrack = stream && stream.getVideoTracks()[0];
+    if (!zoomTrack || !zoomTrack.getCapabilities) return;
+    let caps = {};
+    try { caps = zoomTrack.getCapabilities(); } catch (e) { return; }
+    if (caps.focusMode && caps.focusMode.includes("continuous")) {
+      zoomTrack.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(() => {});
+    }
+    if (!caps.zoom || !(caps.zoom.max > caps.zoom.min)) return;
+    zoomLevels = [1, 1.5, 2, 3].filter((z) => z >= caps.zoom.min && z <= caps.zoom.max);
+    if (zoomLevels.length < 2) return;
+    let saved = 1;
+    try { saved = Number(localStorage.getItem("bpc.zoom")) || 1; } catch (e) {}
+    if (!zoomLevels.includes(saved)) saved = zoomLevels[0];
+    bar.innerHTML = zoomLevels.map((z) => '<button type="button" data-zoom="' + z + '">' + z + "×</button>").join("");
+    bar.hidden = false;
+    applyZoom(saved);
+  }
+  function applyZoom(z) {
+    if (!zoomTrack) return;
+    zoomTrack.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+    $("zoomBar").querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.zoom) === z)));
+    try { localStorage.setItem("bpc.zoom", String(z)); } catch (e) {}
+  }
+  $("zoomBar").addEventListener("click", (e) => { const b = e.target.closest("[data-zoom]"); if (b) applyZoom(Number(b.dataset.zoom)); });
   async function requestWake() {
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request("screen"); } catch (e) { wakeLock = null; }
   }
@@ -760,7 +842,7 @@ details.testing summary { cursor: pointer; color: var(--muted); padding: 4px 0; 
   /* ---------- boot ---------- */
   $("soundBtn").setAttribute("aria-pressed", String(state.sound));
   $("soundBtn").textContent = state.sound ? "Sound on" : "Sound off";
-  renderSetup(); renderTally(); renderLog(); showResult({ kind: "idle" });
+  renderSetup(); renderTally(); renderLog(); renderEngine(); showResult({ kind: "idle" });
 })();
 </script>
 
